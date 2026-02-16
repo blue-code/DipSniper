@@ -86,4 +86,4 @@ DipSniper/
 ---
 
 ## 📝 라이선스
-MIT License - **Created for 병호오빠 💕 by Tiffany**
+MIT License - **Created for BH 💕 by Tiffany**
