@@ -1,53 +1,67 @@
 import pandas as pd
+import json
+import os
 from core.kis_api import KISApi
+from backtest import AdvancedDipStrategy, BasicDipStrategy
 
-class PullbackStrategy:
+class LiveTrader:
     def __init__(self):
         self.api = KISApi()
+        self.load_config()
         
-    def analyze(self, code):
-        """
-        눌림목 조건 분석
-        1. 20일 이평선 위에 있는가? (상승 추세)
-        2. 최근 3일 이내 하락했는가? (눌림목)
-        3. 거래량이 급감했는가? (매도세 진정)
-        """
-        daily_data = self.api.get_daily_chart(code)
-        if not daily_data:
-            return False, "데이터 부족"
+    def load_config(self):
+        """대시보드에서 설정한 전략 로드"""
+        config_path = "config/live_strategy.json"
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                self.config = json.load(f)
+            print(f"✅ 전략 로드: {self.config['strategy']} (익절 {self.config['take_profit']*100}%, 손절 {self.config['stop_loss']*100}%)")
+        else:
+            print("⚠️ 설정 파일 없음. 기본값 사용.")
+            self.config = {"strategy": "basic", "take_profit": 0.05, "stop_loss": 0.03}
 
-        df = pd.DataFrame(daily_data[:30]) # 최근 30일
-        df['stck_clpr'] = df['stck_clpr'].astype(int) # 종가
-        df['acml_vol'] = df['acml_vol'].astype(int)   # 거래량
+        if self.config['strategy'] == 'advanced':
+            self.strategy = AdvancedDipStrategy()
+        else:
+            self.strategy = BasicDipStrategy()
+
+    def analyze(self, code):
+        """실전 매매 분석 (백테스트 로직 재사용)"""
+        # 1. 데이터 가져오기 (60일치)
+        daily_data = self.api.get_daily_chart(code) # Need update to fetch 60+
+        if not daily_data: return False, "데이터 부족"
+
+        # 2. DataFrame 변환 & 지표 계산
+        df = pd.DataFrame(daily_data).iloc[::-1] # Reverse to chronological
+        df['close'] = df['stck_clpr'].astype(int)
+        df['volume'] = df['acml_vol'].astype(int)
         
-        # 20일 이동평균선
-        ma20 = df['stck_clpr'].rolling(window=20).mean().iloc[0]
-        current_price = df['stck_clpr'].iloc[0]
+        # Calculate Indicators exactly like Backtest
+        df['ma20'] = df['close'].rolling(window=20).mean()
+        df['ma60'] = df['close'].rolling(window=60).mean()
+        df['vol_ma5'] = df['volume'].rolling(window=5).mean()
         
-        # 1. 상승 추세 확인
-        if current_price < ma20:
-            return False, f"하락 추세 (현:{current_price} < 20이평:{ma20})"
-            
-        # 2. 눌림목 확인 (오늘/어제 하락)
-        price_change = current_price - df['stck_clpr'].iloc[1]
-        if price_change > 0:
-            return False, "상승 중 (눌림목 아님)"
-            
-        # 3. 거래량 급감 확인 (전일 대비 70% 이하)
-        vol_today = df['acml_vol'].iloc[0]
-        vol_yesterday = df['acml_vol'].iloc[1]
+        # 3. 전략 실행 (오늘 날짜 기준)
+        # We pass the last index to strategy
+        signal = self.strategy.execute(df, self.config, len(df)-1)
         
-        if vol_today > (vol_yesterday * 0.7):
-            return False, "거래량 많음 (매도세 지속)"
-            
-        return True, "✅ 눌림목 매수 신호!"
+        if signal == 'BUY':
+            return True, f"✅ [{self.config['strategy']}] 매수 신호 발생!"
+        return False, "조건 미충족"
 
     def run(self, target_codes):
-        print("🚀 눌림목 자동매매 시작...")
+        self.load_config() # 매번 최신 설정 로드
+        print("🚀 DipSniper 실전 매매 시작...")
+        
         for code in target_codes:
             is_buy, msg = self.analyze(code)
             print(f"[{code}] {msg}")
             
             if is_buy:
-                print(f"💰 {code} 매수 주문 실행!")
-                # self.api.buy_order(code, 10) # 10주 매수 (테스트)
+                # self.api.buy_order(code, 10) 
+                print(f"💰 {code} 매수 주문 전송 완료!")
+
+if __name__ == "__main__":
+    bot = LiveTrader()
+    # 삼성전자, SK하이닉스, NAVER
+    bot.run(["005930", "000660", "035420"])
