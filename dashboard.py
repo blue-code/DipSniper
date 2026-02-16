@@ -15,7 +15,8 @@ config = {
     "ma_period": 20,
     "stop_loss": 0.03,
     "take_profit": 0.05,
-    "strategy": "basic"
+    "strategy": "basic",
+    "ticker": "005930.KS"
 }
 
 last_result = []
@@ -79,6 +80,10 @@ html_template = """
     <div class="card">
         <h2>⚙️ Strategy Settings</h2>
         <form action="/run_backtest" method="post">
+            <div class="form-group">
+                <label>Target Ticker</label>
+                <input type="text" name="ticker" value="{{ config.ticker }}" placeholder="005930.KS">
+            </div>
             <div class="form-group">
                 <label>Strategy Type</label>
                 <select name="strategy">
@@ -156,7 +161,8 @@ async def run_backtest(
     initial_cash: int = Form(...),
     stop_loss: float = Form(...),
     take_profit: float = Form(...),
-    strategy: str = Form(...)
+    strategy: str = Form(...),
+    ticker: str = Form("005930.KS")
 ):
     global config, last_result
     
@@ -164,7 +170,8 @@ async def run_backtest(
         "initial_cash": initial_cash,
         "stop_loss": stop_loss,
         "take_profit": take_profit,
-        "strategy": strategy
+        "strategy": strategy,
+        "ticker": ticker
     })
     
     # Save Config for Live Bot
@@ -172,17 +179,27 @@ async def run_backtest(
     with open("config/live_strategy.json", "w") as f:
         json.dump(config, f)
     
-    # Run Backtest
-    df = pd.DataFrame(data)
-    
-    # Initialize Backtester with correct strategy
-    bt = Backtester(df, initial_cash, strategy_name=strategy) 
-    
-    # Run and capture result
-    last_result, _ = bt.run(config)
-    
-    # Debug: Print result size
-    print(f"✅ Backtest finished. Trades: {len(last_result)}")
+    # Run Backtest with Real Data
+    try:
+        import yfinance as yf
+        print(f"🔄 Fetching Data ({ticker})...")
+        df = yf.download(ticker, period="1y", progress=False)
+        
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.columns = [c.lower() for c in df.columns]
+        df.reset_index(inplace=True)
+        df.rename(columns={'Date': 'date', 'index': 'date'}, inplace=True)
+        
+        if len(df) < 60:
+            last_result = [] # Not enough data
+        else:
+            bt = Backtester(df, initial_cash, strategy_name=strategy) 
+            last_result, _ = bt.run(config)
+            
+    except Exception as e:
+        print(f"❌ Backtest Error: {e}")
+        last_result = []
     
     t = Template(html_template)
     is_running = main_process is not None and main_process.poll() is None
@@ -223,5 +240,6 @@ def get_logs():
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Dashboard running at http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print("🚀 Dashboard running at http://127.0.0.1:8000")
+    # Bind to localhost only (Security + Tunnel compatibility)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

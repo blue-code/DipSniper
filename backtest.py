@@ -1,49 +1,9 @@
 import pandas as pd
 import numpy as np
+import yfinance as yf
+from datetime import datetime, timedelta
 
-# Mock Data for Backtest (Enhanced with OHLC for pattern recognition)
-dates = pd.date_range(start='2024-01-01', periods=100)
-close = []
-open_p = []
-high = []
-low = []
-volume = []
-
-for i in range(100):
-    base_price = 100 + i * 2
-    if 30 <= i <= 32: # Dip
-        base_price -= 10
-        vol = 200
-        # Hammer Pattern at the bottom (i=32)
-        if i == 32:
-            o, c, h, l = base_price, base_price + 2, base_price + 2, base_price - 5
-        else:
-            o, c, h, l = base_price + 2, base_price, base_price + 2, base_price - 2
-    else:
-        vol = 1000
-        o, c, h, l = base_price - 1, base_price + 1, base_price + 2, base_price - 2
-        
-    close.append(c)
-    open_p.append(o)
-    high.append(h)
-    low.append(l)
-    volume.append(vol)
-
-data = {
-    'date': dates,
-    'open': open_p,
-    'high': high,
-    'low': low,
-    'close': close,
-    'volume': volume
-}
-
-# TA-Lib Import Check
-try:
-    import talib
-except ImportError:
-    talib = None
-
+# Strategy Interface
 class StrategyInterface:
     def execute(self, df, config, i):
         raise NotImplementedError
@@ -53,9 +13,16 @@ class BasicDipStrategy(StrategyInterface):
         today = df.iloc[i]
         yesterday = df.iloc[i-1]
         
+        # 1. 상승 추세 (20일선 위)
+        if pd.isna(today['ma20']): return None
         is_uptrend = today['close'] > today['ma20']
+        
+        # 2. 눌림목 (전일 하락)
         is_dip = today['close'] < yesterday['close']
-        vol_drop = today['volume'] < (yesterday['volume'] * 0.7)
+        
+        # 3. 거래량 감소
+        if pd.isna(today['vol_ma5']): return None
+        vol_drop = today['volume'] < (today['vol_ma5'] * 0.8) # 80% 이하
         
         if is_uptrend and is_dip and vol_drop:
             return 'BUY'
@@ -64,6 +31,7 @@ class BasicDipStrategy(StrategyInterface):
 class AdvancedDipStrategy(StrategyInterface):
     def execute(self, df, config, i):
         today = df.iloc[i]
+        yesterday = df.iloc[i-1]
         
         # 1. 정배열 (20 > 60)
         if pd.isna(today['ma60']): return None
@@ -76,28 +44,15 @@ class AdvancedDipStrategy(StrategyInterface):
         # 3. 거래량 감소
         is_vol_dry = today['volume'] <= (today['vol_ma5'] * 0.7)
         
-        # 4. 캔들 패턴 (TA-Lib 사용)
-        is_pattern_bullish = False
-        if talib:
-            # TA-Lib functions expect numpy arrays of type float
-            opens = df['open'].values.astype(float)
-            highs = df['high'].values.astype(float)
-            lows = df['low'].values.astype(float)
-            closes = df['close'].values.astype(float)
-            
-            # Detect Patterns: Hammer, Inverted Hammer, Engulfing
-            hammer = talib.CDLHAMMER(opens, highs, lows, closes)
-            inverted = talib.CDLINVERTEDHAMMER(opens, highs, lows, closes)
-            engulfing = talib.CDLENGULFING(opens, highs, lows, closes)
-            
-            # Check if any bullish pattern triggered today
-            if hammer[i] > 0 or inverted[i] > 0 or engulfing[i] > 0:
-                is_pattern_bullish = True
-        else:
-            # Fallback: Simple Rebound Logic (Close > Open AND Close > Prev Close)
-            is_pattern_bullish = (today['close'] > today['open']) and (today['close'] > df.iloc[i-1]['close'])
+        # 4. 반등 시도 (양봉 or 전일보다 높음)
+        is_rebound = (today['close'] > today['open']) or (today['close'] > yesterday['close'])
         
-        if is_aligned and is_near_ma20 and is_vol_dry and is_pattern_bullish:
+        # 5. RSI (30~55)
+        is_rsi_good = False
+        if not pd.isna(today['rsi']):
+            is_rsi_good = 30 <= today['rsi'] <= 60 # Range relaxed
+        
+        if is_aligned and is_near_ma20 and is_vol_dry and is_rebound and is_rsi_good:
             return 'BUY'
         return None
 
@@ -114,6 +69,7 @@ class Backtester:
             self.strategy = BasicDipStrategy()
         
     def run(self, config):
+        # Calculate Indicators
         self.df['ma20'] = self.df['close'].rolling(window=20).mean()
         self.df['ma60'] = self.df['close'].rolling(window=60).mean()
         self.df['vol_ma5'] = self.df['volume'].rolling(window=5).mean()
@@ -125,8 +81,14 @@ class Backtester:
         rs = gain / loss
         self.df['rsi'] = 100 - (100 / (1 + rs))
         
+        # Ensure we have enough data
+        if len(self.df) < 60: return [], self.cash
+
         for i in range(60, len(self.df)):
             today = self.df.iloc[i]
+            
+            # Use 'Date' column if exists, otherwise use Index
+            date_val = today.get('date') or today.name 
             
             # Sell Logic
             if self.shares > 0:
@@ -136,7 +98,7 @@ class Backtester:
                 if pct > config['take_profit'] or pct < -config['stop_loss']:
                     self.cash += self.shares * today['close']
                     self.shares = 0
-                    self.history.append({'date': today['date'], 'type': 'SELL', 'price': today['close'], 'profit': pct*100})
+                    self.history.append({'date': date_val, 'type': 'SELL', 'price': today['close'], 'profit': pct*100})
                     continue
 
             # Buy Logic
@@ -145,8 +107,9 @@ class Backtester:
                 if signal == 'BUY':
                     self.shares = self.cash // today['close']
                     self.cash -= self.shares * today['close']
-                    self.history.append({'date': today['date'], 'type': 'BUY', 'price': today['close']})
+                    self.history.append({'date': date_val, 'type': 'BUY', 'price': today['close']})
 
+        # Final Value
         if self.shares > 0:
             total_value = self.cash + (self.shares * self.df.iloc[-1]['close'])
         else:
@@ -155,14 +118,31 @@ class Backtester:
         return self.history, total_value
 
 if __name__ == "__main__":
-    df = pd.DataFrame(data)
+    from core.telegram_bot import send_report
     
-    if not talib:
-        print("⚠️ TA-Lib not installed. Using fallback logic.")
-        print("   To install: brew install ta-lib && pip install ta-lib")
+    print("🔄 Fetching Data (Samsung Elec - 005930.KS)...")
+    df = yf.download("005930.KS", period="1y")
+    
+    # Flatten MultiIndex columns
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    
+    df.columns = [c.lower() for c in df.columns]
+    df.reset_index(inplace=True)
+    df.rename(columns={'Date': 'date', 'index': 'date'}, inplace=True)
+    
+    print(f"✅ Data Loaded: {len(df)} rows")
 
     print("\n----- [Advanced Strategy Test] -----")
     bt = Backtester(df.copy(), strategy_name='advanced')
+    initial = 10000000
     log, val = bt.run({'stop_loss':0.03, 'take_profit':0.05})
+    
     print(f"💰 Final Value: {val:,.0f}")
-    for t in log: print(f"  {t['date'].date()} {t['type']} @ {t['price']}")
+    print(f"📜 Trade Log: {len(log)} trades")
+    for t in log:
+        d_str = t['date'].strftime('%Y-%m-%d') if hasattr(t['date'], 'strftime') else str(t['date'])
+        print(f"  {d_str} {t['type']} @ {t['price']:.0f}")
+        
+    send_report(log, val, initial)
+    print("🔔 Telegram report sent!")
