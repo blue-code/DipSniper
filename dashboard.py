@@ -6,8 +6,14 @@ import signal
 import os
 import json
 from backtest import Backtester
+from core.telegram_bot import send_report, set_bot_commands
 
 app = FastAPI()
+
+@app.on_event("startup")
+async def startup_event():
+    print("🤖 Registering Telegram Commands...")
+    set_bot_commands()
 
 # Global Config
 config = {
@@ -195,7 +201,10 @@ async def run_backtest(
             last_result = [] # Not enough data
         else:
             bt = Backtester(df, initial_cash, strategy_name=strategy) 
-            last_result, _ = bt.run(config)
+            last_result, final_value = bt.run(config)
+            
+            # Send Telegram Notification
+            send_report(last_result, final_value, initial_cash)
             
     except Exception as e:
         print(f"❌ Backtest Error: {e}")
