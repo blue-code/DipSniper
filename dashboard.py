@@ -1,4 +1,4 @@
-from flask import FastAPI, render_template_string, Request, Form
+from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse
 import pandas as pd
 import subprocess
@@ -174,8 +174,15 @@ async def run_backtest(
     
     # Run Backtest
     df = pd.DataFrame(data)
+    
+    # Initialize Backtester with correct strategy
     bt = Backtester(df, initial_cash, strategy_name=strategy) 
+    
+    # Run and capture result
     last_result, _ = bt.run(config)
+    
+    # Debug: Print result size
+    print(f"✅ Backtest finished. Trades: {len(last_result)}")
     
     t = Template(html_template)
     is_running = main_process is not None and main_process.poll() is None
