@@ -40,7 +40,11 @@ pip install requests pandas matplotlib fastapi uvicorn jinja2 python-dotenv
 ```
 
 ### 2. API 설정 (실전 매매용)
-`config/settings.env` 파일을 열어 본인의 한국투자증권 계좌 정보를 입력하세요.
+`config/settings.sample.env` 파일을 복사하여 `config/settings.env`로 만들고, 본인의 한국투자증권 계좌 정보를 입력하세요.
+
+```bash
+cp config/settings.sample.env config/settings.env
+```
 
 ```ini
 APP_KEY="나의_앱키"
