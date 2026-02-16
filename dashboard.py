@@ -6,7 +6,8 @@ import signal
 import os
 import json
 from backtest import Backtester
-from core.telegram_bot import send_report, set_bot_commands
+# Fix: Import start_bot_thread to enable polling
+from core.telegram_bot import send_report, set_bot_commands, start_bot_thread
 
 app = FastAPI()
 
@@ -14,6 +15,8 @@ app = FastAPI()
 async def startup_event():
     print("🤖 Registering Telegram Commands...")
     set_bot_commands()
+    # Start the bot listener thread
+    start_bot_thread()
 
 # Global Config
 config = {
