@@ -3,6 +3,14 @@ import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
 
+# Note: TA-Lib requires native binary installation.
+# If 'talib' import fails, we need to guide user to install it.
+try:
+    import talib
+except ImportError:
+    print("⚠️ TA-Lib not found. Using simplified logic.")
+    talib = None
+
 # Strategy Interface
 class StrategyInterface:
     def execute(self, df, config, i):
@@ -44,15 +52,41 @@ class AdvancedDipStrategy(StrategyInterface):
         # 3. 거래량 감소
         is_vol_dry = today['volume'] <= (today['vol_ma5'] * 0.7)
         
-        # 4. 반등 시도 (양봉 or 전일보다 높음)
-        is_rebound = (today['close'] > today['open']) or (today['close'] > yesterday['close'])
-        
+        # --- NEW: Candlestick Pattern Recognition (TA-Lib) ---
+        is_pattern_bullish = False
+        if talib:
+            # Prepare arrays for TA-Lib (requires double precision)
+            opens = df['open'].values.astype(float)
+            highs = df['high'].values.astype(float)
+            lows = df['low'].values.astype(float)
+            closes = df['close'].values.astype(float)
+            
+            # Detect Patterns
+            # Hammer: 100
+            hammer = talib.CDLHAMMER(opens, highs, lows, closes)
+            # Inverted Hammer: 100
+            inv_hammer = talib.CDLINVERTEDHAMMER(opens, highs, lows, closes)
+            # Bullish Engulfing: 100
+            engulfing = talib.CDLENGULFING(opens, highs, lows, closes)
+            # Piercing Line: 100
+            piercing = talib.CDLPIERCING(opens, highs, lows, closes)
+            
+            # Check if ANY bullish pattern happened TODAY (index i)
+            if (hammer[i] > 0 or inv_hammer[i] > 0 or 
+                engulfing[i] > 0 or piercing[i] > 0):
+                is_pattern_bullish = True
+        else:
+            # Fallback Logic: Rebound Candle
+            # Close > Open (Yang-bong) AND Close > Yesterday Close
+            is_pattern_bullish = (today['close'] > today['open']) and (today['close'] > yesterday['close'])
+
         # 5. RSI (30~55)
         is_rsi_good = False
         if not pd.isna(today['rsi']):
             is_rsi_good = 30 <= today['rsi'] <= 60 # Range relaxed
         
-        if is_aligned and is_near_ma20 and is_vol_dry and is_rebound and is_rsi_good:
+        # Strict Mode: Uptrend + Dip + VolDry + Pattern + RSI
+        if is_aligned and is_near_ma20 and is_vol_dry and is_pattern_bullish and is_rsi_good:
             return 'BUY'
         return None
 
