@@ -38,6 +38,41 @@ data = {
     'volume': [1000 if i%5!=0 else 200 for i in range(100)]
 }
 
+# Helper: Stats Calculation
+def calculate_stats(trades):
+    if not trades: return None
+    
+    sell_trades = [t for t in trades if t['type'] == 'SELL']
+    buy_trades = [t for t in trades if t['type'] == 'BUY']
+    
+    if not sell_trades: return {
+        "total_trades": len(trades),
+        "win_rate": 0, "avg_profit": 0, "max_profit": 0, "max_loss": 0, "profit_factor": 0
+    }
+        
+    profits = [t['profit'] for t in sell_trades]
+    
+    wins = [p for p in profits if p > 0]
+    losses = [p for p in profits if p <= 0]
+    
+    win_rate = (len(wins) / len(sell_trades)) * 100 if sell_trades else 0
+    avg_profit = sum(profits) / len(profits) if profits else 0
+    max_profit = max(profits) if profits else 0
+    max_loss = min(profits) if profits else 0
+    
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    
+    return {
+        "total_trades": len(sell_trades),
+        "win_rate": win_rate,
+        "avg_profit": avg_profit,
+        "max_profit": max_profit,
+        "max_loss": max_loss,
+        "profit_factor": profit_factor
+    }
+
 html_template = """
 <!DOCTYPE html>
 <html>
@@ -60,6 +95,11 @@ html_template = """
         .status-running { background: #2e7d32; border: 1px solid #4caf50; }
         .status-stopped { background: #c62828; border: 1px solid #ef5350; }
         .log-box { background: #000; color: #0f0; padding: 10px; font-family: monospace; height: 200px; overflow-y: scroll; border: 1px solid #333; margin-top: 10px; font-size: 0.9em; }
+        
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+        .stat-item { background: #333; padding: 10px; border-radius: 5px; text-align: center; }
+        .stat-val { font-size: 1.2em; font-weight: bold; color: #fff; }
+        .stat-label { font-size: 0.8em; color: #aaa; }
     </style>
 </head>
 <body>
@@ -118,11 +158,43 @@ html_template = """
         </form>
     </div>
 
+    <!-- Stats -->
+    {% if stats %}
+    <div class="card">
+        <h2>📊 Statistics</h2>
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-val">{{ stats.total_trades }}</div>
+                <div class="stat-label">Total Trades</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val" style="color: {{ '#4caf50' if stats.win_rate >= 50 else '#ef5350' }}">{{ stats.win_rate|round(1) }}%</div>
+                <div class="stat-label">Win Rate</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val">{{ stats.profit_factor|round(2) }}</div>
+                <div class="stat-label">Profit Factor</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val" style="color: {{ '#4caf50' if stats.avg_profit > 0 else '#ef5350' }}">{{ stats.avg_profit|round(2) }}%</div>
+                <div class="stat-label">Avg Profit</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val" style="color: #4caf50">{{ stats.max_profit|round(2) }}%</div>
+                <div class="stat-label">Max Profit</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val" style="color: #ef5350">{{ stats.max_loss|round(2) }}%</div>
+                <div class="stat-label">Max Loss</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Results -->
     <div class="card">
-        <h2>📊 Backtest Results</h2>
+        <h2>📜 Trade Log</h2>
         {% if result %}
-        <p><strong>Total Trades:</strong> {{ result|length }}</p>
         <table>
             <tr><th>Date</th><th>Type</th><th>Price</th><th>Note</th></tr>
             {% for trade in result %}
@@ -163,7 +235,8 @@ except ImportError:
 def home():
     t = Template(html_template)
     is_running = main_process is not None and main_process.poll() is None
-    return t.render(config=config, result=last_result, is_running=is_running)
+    stats = calculate_stats(last_result)
+    return t.render(config=config, result=last_result, stats=stats, is_running=is_running)
 
 @app.post("/run_backtest", response_class=HTMLResponse)
 async def run_backtest(
@@ -213,9 +286,11 @@ async def run_backtest(
         print(f"❌ Backtest Error: {e}")
         last_result = []
     
+    stats = calculate_stats(last_result)
+    
     t = Template(html_template)
     is_running = main_process is not None and main_process.poll() is None
-    return t.render(config=config, result=last_result, is_running=is_running)
+    return t.render(config=config, result=last_result, stats=stats, is_running=is_running)
 
 @app.post("/start_bot", response_class=HTMLResponse)
 async def start_bot():
