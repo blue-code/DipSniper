@@ -179,8 +179,8 @@ def set_bot_commands():
     url = f"https://api.telegram.org/bot{TOKEN}/setMyCommands"
     commands = [
         {"command": "start", "description": "봇 시작"},
-        {"command": "backtest", "description": "백테스트 (종목 전략 기간)"},
-        {"command": "price", "description": "현재가 조회"},
+        {"command": "backtest", "description": "백테스트 [종목] [전략] [기간]"},
+        {"command": "price", "description": "현재가 조회 [종목]"},
         {"command": "recommend", "description": "AI 추천 종목"},
         {"command": "status", "description": "상태 확인"},
         {"command": "stop", "description": "긴급 정지"}
