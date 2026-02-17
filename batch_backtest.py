@@ -107,12 +107,14 @@ def run_batch_backtest():
             _, val_adv = bt_adv.run(config)
             ret_adv = (val_adv - initial_cash) / initial_cash * 100
             
-            print(f"Basic: {ret_basic:>6.1f}% | Adv: {ret_adv:>6.1f}%")
+            print(f"Basic: {ret_basic:>6.1f}% ({len(bt_basic.history)} tr) | Adv: {ret_adv:>6.1f}% ({len(bt_adv.history)} tr)")
             
             results.append({
                 'Ticker': ticker,
-                'Basic': ret_basic,
-                'Advanced': ret_adv
+                'Basic %': round(ret_basic, 1),
+                'Basic #': len(bt_basic.history),
+                'Adv %': round(ret_adv, 1),
+                'Adv #': len(bt_adv.history)
             })
             
         except Exception as e:
@@ -124,12 +126,14 @@ def run_batch_backtest():
     print(res_df)
     
     if not res_df.empty:
-        avg_basic = res_df['Basic'].mean()
-        avg_adv = res_df['Advanced'].mean()
+        avg_basic = res_df['Basic %'].mean()
+        avg_adv = res_df['Adv %'].mean()
+        avg_trades_basic = res_df['Basic #'].mean()
+        avg_trades_adv = res_df['Adv #'].mean()
         
         print("-" * 60)
-        print(f"🏆 Average Return (Basic):    {avg_basic:.2f}%")
-        print(f"🏆 Average Return (Advanced): {avg_adv:.2f}%")
+        print(f"🏆 Avg Return (Basic): {avg_basic:.2f}% (Avg Trades: {avg_trades_basic:.1f})")
+        print(f"🏆 Avg Return (Adv)  : {avg_adv:.2f}% (Avg Trades: {avg_trades_adv:.1f})")
         
         winner = "Advanced" if avg_adv > avg_basic else "Basic"
         print(f"🎉 Winner Strategy: {winner}")
